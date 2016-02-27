@@ -1,0 +1,96 @@
+---
+title: 'Dumbell Raises: Predicting Optimal Form Using Accelerometers'
+author: "mike borg"
+date: "February 26, 2016"
+output: html_document
+---
+
+# Introduction
+
+The following analyses data from the Weight Lifting Exercise Dataset [available here](http://groupware.les.inf.puc-rio.br/har).
+
+The author generates a model based on the random forest algorithm and uses principle components analysis before applying the aforementioned algorithm.
+
+# Reproducibility
+
+```{r}
+set.seed(336633)
+
+library(caret)
+library(mlbench)
+library(randomForest)
+library(corrplot)
+
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "data/pml-training.csv", method = "curl")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "data/pml-testing.csv", method = "curl")
+
+training <- read.csv("data/pml-training.csv", na.strings=c("","NA"))
+testing <- read.csv("data/pml-testing.csv",na.strings=c("","NA"))
+```
+
+# Data Cleaning
+
+Before we do any analysis it's it's important to exclude the columns that contain missing values. We only remove columns that contain missing values for over 90% of the observations in the data set. We also want to remove any non-numeric observations from the data set. We do this because there non-numeric observation variables do not correspond to the raw data associated with a point in three dimensional space.
+
+```{r}
+subset <- training[, colSums(is.na(training)) < 1]
+nums <- sapply(subset, is.numeric)
+finalDf <- subset[,nums]
+finalDf$classe <- subset$classe
+
+subsetTesting <- testing[, colSums(is.na(testing)) < 1]
+numsTesting <- sapply(subsetTesting, is.numeric)
+finalTestDf <- subsetTesting[,numsTesting]
+
+
+inTrain <- createDataPartition(y=finalDf$classe, p=0.75, list=FALSE)
+training <- finalDf[inTrain,]
+validation <- finalDf[-inTrain,]
+```
+
+# Pre-Processing, Transformation
+
+This particular data set is quite robust in terms of the number of potential predictors we might use in our model. It is likely that we can do some additional pre-processing, and even reduce the total number of predictors and maybe even improve performance - performance in this case is a major issue on the author's machine. 
+First we check to see the correlation of the variables. There appear to be enough highly correlated variables to warrant PCA on its own.
+
+```{r}
+correlations <- cor(training[,-57])
+corrplot(correlations, method = "color", order = "FPC", type = "lower", tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+```
+
+We then go ahead with the PCA.
+
+```{r}
+preProc <- preProcess(training[,-57], method = "pca")
+trainPc <- predict(preProc, training[,-57])
+validationPc <- predict(preProc, validation[,-57])
+testPc <- predict(preProc, finalTestDf[,-57])
+```
+
+# Model Selection Exploration
+
+As a first candidate for model exploration, we use the random forest algorithm and find that it appears to provide quite an excellent OOB estimate of error rate of 1.98% when testing on the training data set.
+
+```{r}
+rfFit <- randomForest(training$classe ~ ., data = trainPc, mtry=3, ntree=225)
+print(rfFit)
+```
+
+Normally it would make sense to explore some additional models; however the accuracy is so impressive using random forests, that we elect to move forward. In short, given the requirements, we've achieved a "good enough" state. The author also explored caret's boosting (GBM) algorithm; however the performance was so poor that it became unfeasible.
+
+# Validation 
+
+When applying our fitted model to the out of sample validation data set, again, we see very high levels of accuracy - ~98%. We can also see that we need roughly 100 trees to achieve maximum accuracy, at which point further analysis provides no value.
+
+```{r}
+confusionMatrix(validation$classe, predict(rfFit, validationPc))
+plot(rfFit)
+```
+
+# Predictions
+
+Finally, we blindly apply the model to the test data set and achieve the following predictions.
+
+```{r}
+predict(rfFit, testPc)
+```
